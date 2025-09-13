@@ -1,0 +1,1311 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Plus, Search, Filter, Eye, Edit, Archive, Package, AlertTriangle, TrendingUp, Calendar, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { mockMedicalMedicines, mockDentalMedicines, getMockData } from '../lib/mockData';
+import { RecentLogs } from '../components/RecentLogs';
+
+const Medicines = () => {
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState<'medical' | 'dental'>('medical');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [viewMedicine, setViewMedicine] = useState<any>(null);
+  const [editMedicine, setEditMedicine] = useState<any>(null);
+  const [filters, setFilters] = useState({
+    category: '',
+    stockStatus: '',
+    expiryStatus: ''
+  });
+  const [showFilters, setShowFilters] = useState(false);
+  const [sortField, setSortField] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [highlightedId, setHighlightedId] = useState<string>('');
+
+  // Check for search highlight from universal search
+  useEffect(() => {
+    const highlightId = localStorage.getItem('searchHighlight');
+    console.log('Medicines page effect triggered, searchHighlight:', highlightId);
+    
+    if (highlightId && highlightId !== highlightedId) {
+      setHighlightedId(highlightId);
+      console.log('Setting highlightedId to:', highlightId);
+      
+      // Determine which tab to switch to based on the ID prefix
+      if (highlightId.startsWith('medical-')) {
+        console.log('Switching to medical tab');
+        setActiveTab('medical');
+      } else if (highlightId.startsWith('dental-')) {
+        console.log('Switching to dental tab');
+        setActiveTab('dental');
+      }
+    }
+  }, [location.pathname, highlightedId]);
+
+  // Separate effect to handle scrolling after the component updates
+  useEffect(() => {
+    if (highlightedId) {
+      console.log('Scrolling effect triggered for:', highlightedId);
+      
+      // Scroll to highlighted item with retry mechanism to ensure element exists
+      const scrollToElement = (attempts = 0) => {
+        const medicineId = highlightedId.replace(/^(medical-|dental-)/, '');
+        console.log(`Attempt ${attempts + 1}: Looking for element with data-medicine-id:`, medicineId);
+        const element = document.querySelector(`[data-medicine-id="${medicineId}"]`);
+        console.log('Found element:', element);
+        
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return true; // Success
+        } else if (attempts < 15) {
+          // Retry up to 15 times with increasing delay
+          setTimeout(() => scrollToElement(attempts + 1), 300 + (attempts * 100));
+          return false; // Continue trying
+        } else {
+          console.log('Could not find element after 15 attempts');
+          return false; // Give up
+        }
+      };
+      
+      // Start trying to scroll immediately
+      scrollToElement();
+      
+      // Clear the highlight after 8 seconds
+      const clearTimer = setTimeout(() => {
+        console.log('Clearing highlight');
+        setHighlightedId('');
+        localStorage.removeItem('searchHighlight');
+      }, 8000);
+
+      return () => clearTimeout(clearTimer);
+    }
+  }, [highlightedId, activeTab, currentData, searchTerm, filters, sortField, sortDirection]); // Depend on variables that affect table rendering
+
+  // Also check on component focus/visibility change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        const highlightId = localStorage.getItem('searchHighlight');
+        if (highlightId && highlightId !== highlightedId) {
+          console.log('Page became visible, checking for highlight:', highlightId);
+          setHighlightedId(highlightId);
+          
+          if (highlightId.startsWith('medical-')) {
+            setActiveTab('medical');
+          } else if (highlightId.startsWith('dental-')) {
+            setActiveTab('dental');
+          }
+          
+          const scrollToElement = (attempts = 0) => {
+            const medicineId = highlightId.replace(/^(medical-|dental-)/, '');
+            const element = document.querySelector(`[data-medicine-id="${medicineId}"]`);
+            
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else if (attempts < 10) {
+              setTimeout(() => scrollToElement(attempts + 1), 200 * (attempts + 1));
+            }
+          };
+          
+          setTimeout(() => scrollToElement(), 100);
+          
+          setTimeout(() => {
+            setHighlightedId('');
+            localStorage.removeItem('searchHighlight');
+          }, 5000);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [highlightedId]);
+
+  // Get current data based on active tab
+  const currentData = activeTab === 'medical' ? mockMedicalMedicines : mockDentalMedicines;
+  
+  // Get unique values for filters
+  const uniqueCategories = [...new Set(currentData.map(medicine => medicine.category))];
+  
+  // Sort function
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Filter and sort medicines based on search term, filters, and sorting
+  const filteredMedicines = useMemo(() => {
+    let filtered = currentData;
+    
+    // Apply search filter
+    if (searchTerm) {
+      filtered = filtered.filter(medicine =>
+        medicine.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        medicine.medicine_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        medicine.generic_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        medicine.category.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+    
+    // Apply category filter
+    if (filters.category) {
+      filtered = filtered.filter(medicine => medicine.category === filters.category);
+    }
+    
+    // Apply stock status filter
+    if (filters.stockStatus === 'low') {
+      filtered = filtered.filter(medicine => medicine.quantity <= medicine.reorder_threshold);
+    } else if (filters.stockStatus === 'normal') {
+      filtered = filtered.filter(medicine => medicine.quantity > medicine.reorder_threshold);
+    }
+    
+    // Apply expiry status filter
+    if (filters.expiryStatus === 'expiring') {
+      filtered = filtered.filter(medicine => {
+        const expiry = new Date(medicine.expiry_date);
+        const today = new Date();
+        const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        return daysUntilExpiry <= 90 && daysUntilExpiry > 0;
+      });
+    } else if (filters.expiryStatus === 'expired') {
+      filtered = filtered.filter(medicine => {
+        const expiry = new Date(medicine.expiry_date);
+        const today = new Date();
+        return expiry < today;
+      });
+    }
+    
+    // Apply sorting
+    if (sortField) {
+      filtered.sort((a: any, b: any) => {
+        let aValue = a[sortField];
+        let bValue = b[sortField];
+        
+        // Handle different data types
+        if (sortField === 'expiry_date') {
+          aValue = new Date(aValue);
+          bValue = new Date(bValue);
+        } else if (typeof aValue === 'string') {
+          aValue = aValue.toLowerCase();
+          bValue = bValue.toLowerCase();
+        }
+        
+        if (sortDirection === 'asc') {
+          return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+        } else {
+          return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+        }
+      });
+    }
+    
+    return filtered;
+  }, [searchTerm, currentData, filters, sortField, sortDirection]);
+
+  // Calculate statistics for current tab
+  const totalMedicines = currentData.reduce((sum, medicine) => sum + medicine.quantity, 0);
+  const lowStockCount = currentData.filter(medicine => medicine.quantity <= medicine.reorder_threshold).length;
+  const expiringCount = currentData.filter(medicine => {
+    const expiry = new Date(medicine.expiry_date);
+    const today = new Date();
+    const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return daysUntilExpiry <= 90 && daysUntilExpiry > 0;
+  }).length;
+
+  const isLowStock = (quantity: number, threshold: number) => {
+    return quantity <= threshold;
+  };
+
+  const isExpiringSoon = (expiryDate: string) => {
+    const expiry = new Date(expiryDate);
+    const today = new Date();
+    const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return daysUntilExpiry <= 90 && daysUntilExpiry > 0;
+  };
+
+
+  const handleView = (medicine: any) => {
+    setViewMedicine(medicine);
+  };
+
+  const handleEdit = (medicine: any) => {
+    setEditMedicine(medicine);
+    setShowEditModal(true);
+  };
+
+  const handleArchive = (medicine: any) => {
+    if (window.confirm(`Are you sure you want to archive ${medicine.name}?`)) {
+      // Find and remove from the appropriate array
+      const targetArray = activeTab === 'medical' ? mockMedicalMedicines : mockDentalMedicines;
+      const medicineIndex = targetArray.findIndex(m => m.id === medicine.id);
+      
+      if (medicineIndex !== -1) {
+        targetArray.splice(medicineIndex, 1);
+        alert(`${medicine.name} has been archived successfully!`);
+        
+        // Force re-render by updating a state that triggers useMemo recalculation
+        setSearchTerm(searchTerm + '');
+      }
+    }
+  };
+
+  const handleAddMedicine = () => {
+    setShowAddModal(true);
+  };
+
+  const handleQuickAdd = () => {
+    setShowAddModal(true);
+  };
+
+  const handleQuickSearch = (term: string) => {
+    setSearchTerm(term);
+  };
+
+  return (
+    <div className="p-6">
+      <div className="max-w-7xl mx-auto space-y-8">
+        {/* Search Result Notification */}
+        {highlightedId && (
+          <div className="bg-yellow-100 border border-yellow-200 rounded-2xl px-6 py-4 shadow-lg">
+            <div className="flex items-center space-x-3 text-yellow-800">
+              <div className="flex-shrink-0">
+                <div className="w-3 h-3 bg-yellow-500 rounded-full animate-pulse"></div>
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Search Result Found</p>
+                <p className="text-xs text-yellow-700">The item you searched for is highlighted in the table below.</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Header */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 p-8 text-white shadow-2xl">
+          <div className="absolute inset-0 bg-black/20"></div>
+          <div className="relative">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-4xl font-bold mb-3 tracking-tight">💊 Medicine Inventory</h1>
+                <p className="text-emerald-100 text-lg">Comprehensive medical and dental medicine management system</p>
+              </div>
+              <div className="hidden md:block">
+                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+                  <Package className="h-16 w-16 text-white/90 mx-auto mb-2" />
+                  <p className="text-sm text-emerald-100 text-center">Smart Inventory</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="absolute -bottom-8 -right-8 opacity-20">
+            <Package className="h-32 w-32 text-white" />
+          </div>
+        </div>
+
+        {/* Department Tabs */}
+        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/50 p-3">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setActiveTab('medical')}
+              className={`group flex-1 px-8 py-6 rounded-2xl font-bold text-lg transition-all duration-500 transform ${
+                activeTab === 'medical'
+                  ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-green-500 text-white shadow-2xl scale-105 shadow-emerald-500/25'
+                  : 'text-gray-700 hover:bg-gradient-to-r hover:from-gray-50 hover:to-emerald-50 hover:text-emerald-700 hover:scale-102'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-3">
+                <div className={`p-2 rounded-xl ${
+                  activeTab === 'medical' ? 'bg-white/20' : 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-200'
+                }`}>
+                  <Package className="h-5 w-5" />
+                </div>
+                <div>
+                  <div>Medical Medicines</div>
+                  <div className={`text-sm font-normal ${
+                    activeTab === 'medical' ? 'text-emerald-100' : 'text-gray-500'
+                  }`}>
+                    {mockMedicalMedicines.length} items
+                  </div>
+                </div>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('dental')}
+              className={`group flex-1 px-8 py-6 rounded-2xl font-bold text-lg transition-all duration-500 transform ${
+                activeTab === 'dental'
+                  ? 'bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 text-white shadow-2xl scale-105 shadow-blue-500/25'
+                  : 'text-gray-700 hover:bg-gradient-to-r hover:from-gray-50 hover:to-blue-50 hover:text-blue-700 hover:scale-102'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-3">
+                <div className={`p-2 rounded-xl ${
+                  activeTab === 'dental' ? 'bg-white/20' : 'bg-blue-100 text-blue-600 group-hover:bg-blue-200'
+                }`}>
+                  <Package className="h-5 w-5" />
+                </div>
+                <div>
+                  <div>Dental Medicines</div>
+                  <div className={`text-sm font-normal ${
+                    activeTab === 'dental' ? 'text-blue-100' : 'text-gray-500'
+                  }`}>
+                    {mockDentalMedicines.length} items
+                  </div>
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="group relative overflow-hidden bg-gradient-to-br from-white to-emerald-50 p-6 rounded-3xl shadow-2xl border border-emerald-100 hover:shadow-3xl transition-all duration-500 transform hover:scale-105 hover:-translate-y-2">
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-emerald-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+            <div className="relative flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-emerald-600 mb-2 uppercase tracking-wider">Total Medicines</p>
+                <p className="text-4xl font-black text-gray-900 mb-1">{currentData.length}</p>
+                <p className="text-xs text-emerald-600 font-semibold">Active medicines</p>
+              </div>
+              <div className="relative">
+                <div className="h-16 w-16 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl flex items-center justify-center transform rotate-3 group-hover:rotate-12 group-hover:scale-110 transition-all duration-500 shadow-lg shadow-emerald-500/25">
+                  <Package className="h-8 w-8 text-white" />
+                </div>
+                <div className="absolute -top-1 -right-1 h-4 w-4 bg-emerald-400 rounded-full animate-ping"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="group relative overflow-hidden bg-gradient-to-br from-white to-red-50 p-6 rounded-3xl shadow-2xl border border-red-100 hover:shadow-3xl transition-all duration-500 transform hover:scale-105 hover:-translate-y-2">
+            <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-red-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+            <div className="relative flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-red-600 mb-2 uppercase tracking-wider">Low Stock Alert</p>
+                <p className="text-4xl font-black text-gray-900 mb-1">{lowStockCount}</p>
+                <p className="text-xs text-red-600 font-semibold">Needs restocking</p>
+              </div>
+              <div className="relative">
+                <div className="h-16 w-16 bg-gradient-to-br from-red-500 to-red-600 rounded-2xl flex items-center justify-center transform rotate-3 group-hover:rotate-12 group-hover:scale-110 transition-all duration-500 shadow-lg shadow-red-500/25">
+                  <AlertTriangle className="h-8 w-8 text-white animate-pulse" />
+                </div>
+                {lowStockCount > 0 && (
+                  <div className="absolute -top-1 -right-1 h-4 w-4 bg-red-400 rounded-full animate-bounce"></div>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          <div className="group relative overflow-hidden bg-gradient-to-br from-white to-blue-50 p-6 rounded-3xl shadow-2xl border border-blue-100 hover:shadow-3xl transition-all duration-500 transform hover:scale-105 hover:-translate-y-2">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-blue-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+            <div className="relative flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-blue-600 mb-2 uppercase tracking-wider">Total Inventory</p>
+                <p className="text-4xl font-black text-gray-900 mb-1">{totalMedicines.toLocaleString()}</p>
+                <p className="text-xs text-blue-600 font-semibold">Units in stock</p>
+              </div>
+              <div className="relative">
+                <div className="h-16 w-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center transform rotate-3 group-hover:rotate-12 group-hover:scale-110 transition-all duration-500 shadow-lg shadow-blue-500/25">
+                  <TrendingUp className="h-8 w-8 text-white" />
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="group relative overflow-hidden bg-gradient-to-br from-white to-amber-50 p-6 rounded-3xl shadow-2xl border border-amber-100 hover:shadow-3xl transition-all duration-500 transform hover:scale-105 hover:-translate-y-2">
+            <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-amber-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+            <div className="relative flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-amber-600 mb-2 uppercase tracking-wider">Expiring Soon</p>
+                <p className="text-4xl font-black text-gray-900 mb-1">{expiringCount}</p>
+                <p className="text-xs text-amber-600 font-semibold">Within 90 days</p>
+              </div>
+              <div className="relative">
+                <div className="h-16 w-16 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center transform rotate-3 group-hover:rotate-12 group-hover:scale-110 transition-all duration-500 shadow-lg shadow-amber-500/25">
+                  <Calendar className="h-8 w-8 text-white" />
+                </div>
+                {expiringCount > 0 && (
+                  <div className="absolute -top-1 -right-1 h-4 w-4 bg-orange-400 rounded-full animate-pulse"></div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        {/* Recent Logs */}
+        <RecentLogs resourceType="medicine" limit={3} />
+
+        {/* Filters and Add Button */}
+        <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/50 p-8">
+          <div className="flex justify-between items-center mb-8">
+            <div className="flex items-center space-x-6">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl shadow-lg">
+                  <Search className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold text-gray-900">Smart Search & Filters</h3>
+                  <p className="text-sm text-gray-600">Find and filter medicines instantly</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`flex items-center space-x-3 px-6 py-3 text-sm font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 ${
+                  showFilters 
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/25'
+                    : 'bg-gradient-to-r from-gray-100 to-gray-200 text-gray-700 hover:from-indigo-100 hover:to-purple-100 hover:text-indigo-700'
+                }`}
+              >
+                <Filter className="h-5 w-5" />
+                <span>Advanced Filters</span>
+                {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </button>
+            </div>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="group flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-700 hover:via-teal-700 hover:to-cyan-700 text-white rounded-2xl shadow-2xl hover:shadow-3xl transform hover:scale-105 transition-all duration-400"
+            >
+              <div className="p-1 bg-white/20 rounded-lg group-hover:bg-white/30 transition-all duration-300">
+                <Plus className="h-5 w-5" />
+              </div>
+              <div className="text-left">
+                <div className="font-bold text-sm">Add New Medicine</div>
+                <div className="text-xs text-emerald-100">{activeTab === 'medical' ? 'Medical' : 'Dental'} Department</div>
+              </div>
+            </button>
+          </div>
+          
+          {/* Search Bar */}
+          <div className="mb-6">
+            <div className="relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <Search className="h-6 w-6 text-gray-400 group-focus-within:text-indigo-500 transition-colors duration-300" />
+              </div>
+              <input
+                type="text"
+                className="block w-full pl-14 pr-6 py-5 border-2 border-gray-200 bg-gradient-to-r from-gray-50 to-white text-gray-900 placeholder-gray-500 rounded-2xl text-lg leading-5 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 focus:bg-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                placeholder="🔍 Search medicines by name, code, generic name, or category..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center"
+                >
+                  <X className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors duration-200" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Advanced Filters */}
+          {showFilters && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 rounded-2xl border-2 border-indigo-100 animate-in slide-in-from-top-5 duration-500">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Category</label>
+                <select
+                  value={filters.category}
+                  onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:border-green-500 focus:ring-green-500 transition-colors duration-200"
+                >
+                  <option value="">All Categories</option>
+                  {uniqueCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Stock Status</label>
+                <select
+                  value={filters.stockStatus}
+                  onChange={(e) => setFilters({ ...filters, stockStatus: e.target.value })}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:border-green-500 focus:ring-green-500 transition-colors duration-200"
+                >
+                  <option value="">All Stock Levels</option>
+                  <option value="low">Low Stock</option>
+                  <option value="normal">Normal Stock</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Expiry Status</label>
+                <select
+                  value={filters.expiryStatus}
+                  onChange={(e) => setFilters({ ...filters, expiryStatus: e.target.value })}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:border-green-500 focus:ring-green-500 transition-colors duration-200"
+                >
+                  <option value="">All Items</option>
+                  <option value="expiring">Expiring Soon (90 days)</option>
+                  <option value="expired">Expired</option>
+                </select>
+              </div>
+              
+              <div className="md:col-span-3 flex justify-between items-center mt-6 pt-4 border-t border-indigo-200">
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={() => setFilters({ category: '', stockStatus: '', expiryStatus: '' })}
+                    className="flex items-center space-x-2 px-6 py-3 text-sm font-bold text-indigo-600 hover:text-white bg-white hover:bg-indigo-600 border-2 border-indigo-600 rounded-xl transition-all duration-300 transform hover:scale-105"
+                  >
+                    <X className="h-4 w-4" />
+                    <span>Clear All Filters</span>
+                  </button>
+                  <div className="px-4 py-2 bg-white/60 rounded-xl border border-indigo-200">
+                    <div className="text-sm font-bold text-indigo-700">
+                      Showing {filteredMedicines.length} of {currentData.length} medicines
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-indigo-600 font-semibold">
+                  🔍 Real-time filtering active
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+
+        {/* Medicines Table */}
+        <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/50 overflow-hidden">
+          <div className="px-8 py-6 bg-gradient-to-r from-gray-50 via-white to-gray-50 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className={
+                  `p-3 rounded-2xl shadow-lg ${activeTab === 'medical' 
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600' 
+                    : 'bg-gradient-to-r from-blue-500 to-indigo-600'}`
+                }>
+                  <Package className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold text-gray-900">
+                    {activeTab === 'medical' ? 'Medical' : 'Dental'} Medicines Inventory
+                  </h3>
+                  <p className="text-sm text-gray-600">Complete medicine catalog with real-time stock tracking</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-gray-900">{filteredMedicines.length}</div>
+                <div className="text-sm text-gray-600">Active medicines</div>
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full table-auto divide-y divide-gray-200">
+              <thead className={`bg-gradient-to-r ${
+                activeTab === 'medical' 
+                  ? 'from-emerald-50 via-teal-50 to-cyan-50' 
+                  : 'from-blue-50 via-indigo-50 to-purple-50'
+              }`}>
+                <tr>
+                  <th className="px-8 py-6 text-center text-xs font-black text-gray-700 uppercase tracking-wider">
+                    <button 
+                      onClick={() => handleSort('medicine_code')}
+                      className="group flex items-center justify-center space-x-2 hover:text-emerald-600 transition-all duration-200 font-bold w-full"
+                    >
+                      <span className="group-hover:scale-105 transition-transform">Medicine Code</span>
+                      {sortField === 'medicine_code' && (
+                        <div className="animate-bounce">
+                          {sortDirection === 'asc' ? <ChevronUp className="h-4 w-4 text-emerald-600" /> : <ChevronDown className="h-4 w-4 text-emerald-600" />}
+                        </div>
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    <button 
+                      onClick={() => handleSort('name')}
+                      className="flex items-center justify-center space-x-1 hover:text-gray-900 transition-colors w-full"
+                    >
+                      <span>Medicine Details</span>
+                      {sortField === 'name' && (
+                        sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    <button 
+                      onClick={() => handleSort('category')}
+                      className="flex items-center justify-center space-x-1 hover:text-gray-900 transition-colors w-full"
+                    >
+                      <span>Category</span>
+                      {sortField === 'category' && (
+                        sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    <button 
+                      onClick={() => handleSort('quantity')}
+                      className="flex items-center justify-center space-x-1 hover:text-gray-900 transition-colors w-full"
+                    >
+                      <span>Stock</span>
+                      {sortField === 'quantity' && (
+                        sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    <button 
+                      onClick={() => handleSort('expiry_date')}
+                      className="flex items-center justify-center space-x-1 hover:text-gray-900 transition-colors w-full"
+                    >
+                      <span>Expiry</span>
+                      {sortField === 'expiry_date' && (
+                        sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {filteredMedicines.map((medicine, index) => {
+                  const isHighlighted = highlightedId === `${activeTab}-${medicine.id}`;
+                  return (
+                  <tr key={medicine.id} data-medicine-id={medicine.id} className={`group hover:bg-gradient-to-r transition-all duration-300 transform hover:scale-[1.02] hover:shadow-lg ${
+                    activeTab === 'medical' 
+                      ? 'hover:from-emerald-50 hover:to-teal-50 hover:shadow-emerald-100' 
+                      : 'hover:from-blue-50 hover:to-indigo-50 hover:shadow-blue-100'
+                  } ${index % 2 === 0 ? 'bg-gray-50/30' : 'bg-white'} ${
+                    isHighlighted ? 'bg-yellow-100 border-2 border-yellow-300 shadow-lg ring-2 ring-yellow-300 ring-opacity-50' : ''
+                  }`}>
+                    <td className="px-8 py-6 whitespace-nowrap text-center">
+                      <div className="flex justify-center">
+                        <span className={`group-hover:scale-105 transition-transform inline-flex items-center px-4 py-2 rounded-xl text-sm font-bold shadow-sm ${
+                          activeTab === 'medical' 
+                            ? 'bg-gradient-to-r from-emerald-100 via-teal-100 to-cyan-100 text-emerald-800 group-hover:shadow-emerald-200'
+                            : 'bg-gradient-to-r from-blue-100 via-indigo-100 to-purple-100 text-blue-800 group-hover:shadow-blue-200'
+                        }`}>
+                          {medicine.medicine_code}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className="space-y-1">
+                        <div className="text-sm font-bold text-gray-900">
+                          {medicine.name}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {medicine.generic_name} - {medicine.brand_name}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {medicine.form} • {medicine.strength}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className="flex justify-center">
+                        <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-700">
+                          {medicine.category}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className="flex items-center justify-center space-x-2">
+                        <span className={`text-sm font-bold ${
+                          isLowStock(medicine.quantity, medicine.reorder_threshold) ? 'text-red-600' : 'text-gray-900'
+                        }`}>
+                          {medicine.quantity}
+                        </span>
+                        {isLowStock(medicine.quantity, medicine.reorder_threshold) && (
+                          <AlertTriangle className="h-4 w-4 text-red-500" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className={`text-sm ${isExpiringSoon(medicine.expiry_date) ? 'text-orange-600 font-medium' : 'text-gray-700'}`}>
+                        {new Date(medicine.expiry_date).toLocaleDateString()}
+                        {isExpiringSoon(medicine.expiry_date) && <div className="text-xs text-orange-500">Expiring soon</div>}
+                      </div>
+                    </td>
+                    <td className="px-8 py-6 whitespace-nowrap text-center">
+                      <div className="flex justify-center space-x-3">
+                        <button
+                          onClick={() => handleView(medicine)}
+                          className="group/btn relative p-3 text-blue-600 hover:text-white bg-blue-50 hover:bg-blue-600 rounded-xl transition-all duration-300 transform hover:scale-110 hover:shadow-lg hover:shadow-blue-500/25"
+                          title="View Details"
+                        >
+                          <Eye className="h-5 w-5" />
+                          <div className="absolute -inset-1 bg-blue-600 rounded-xl opacity-0 group-hover/btn:opacity-20 transition-opacity"></div>
+                        </button>
+                        <button
+                          onClick={() => handleEdit(medicine)}
+                          className="group/btn relative p-3 text-emerald-600 hover:text-white bg-emerald-50 hover:bg-emerald-600 rounded-xl transition-all duration-300 transform hover:scale-110 hover:shadow-lg hover:shadow-emerald-500/25"
+                          title="Edit Medicine"
+                        >
+                          <Edit className="h-5 w-5" />
+                          <div className="absolute -inset-1 bg-emerald-600 rounded-xl opacity-0 group-hover/btn:opacity-20 transition-opacity"></div>
+                        </button>
+                        <button
+                          onClick={() => handleArchive(medicine)}
+                          className="group/btn relative p-3 text-red-600 hover:text-white bg-red-50 hover:bg-red-600 rounded-xl transition-all duration-300 transform hover:scale-110 hover:shadow-lg hover:shadow-red-500/25"
+                          title="Archive Medicine"
+                        >
+                          <Archive className="h-5 w-5" />
+                          <div className="absolute -inset-1 bg-red-600 rounded-xl opacity-0 group-hover/btn:opacity-20 transition-opacity"></div>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Results Info */}
+        <div className="bg-gradient-to-r from-white via-gray-50 to-white px-8 py-6 rounded-3xl shadow-2xl border border-gray-100">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className={
+                activeTab === 'medical' 
+                  ? 'p-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600' 
+                  : 'p-3 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-600'
+              }>
+                <Package className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <div className="text-lg font-bold text-gray-900">
+                  Showing {filteredMedicines.length} of {currentData.length} {activeTab} medicines
+                </div>
+                <div className="text-sm text-gray-600">
+                  {searchTerm ? `Filtered results for "${searchTerm}"` : 'Complete inventory listing'}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-500">Last updated</div>
+              <div className="text-sm font-semibold text-gray-700">{new Date().toLocaleTimeString()}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Add Medicine Modal */}
+        {showAddModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white rounded-3xl p-8 max-w-4xl w-full mx-4 shadow-2xl transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-2xl font-bold text-gray-900">Add New {activeTab === 'medical' ? 'Medical' : 'Dental'} Medicine</h3>
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
+                >
+                  <X className="h-6 w-6 text-gray-500" />
+                </button>
+              </div>
+              
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target as HTMLFormElement);
+                const newMedicine = {
+                  id: Date.now().toString(),
+                  medicine_code: formData.get('medicine_code') as string,
+                  name: formData.get('name') as string,
+                  generic_name: formData.get('generic_name') as string,
+                  brand_name: formData.get('brand_name') as string,
+                  category: formData.get('category') as string,
+                  department: activeTab,
+                  form: formData.get('form') as string,
+                  strength: formData.get('strength') as string,
+                  quantity: parseInt(formData.get('quantity') as string),
+                  reorder_threshold: parseInt(formData.get('reorder_threshold') as string),
+                  unit_cost: parseFloat(formData.get('unit_cost') as string),
+                  expiry_date: formData.get('expiry_date') as string,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                };
+                
+                // Add to the appropriate array (this would typically be an API call)
+                if (activeTab === 'medical') {
+                  mockMedicalMedicines.push(newMedicine);
+                } else {
+                  mockDentalMedicines.push(newMedicine);
+                }
+                
+                alert('Medicine added successfully!');
+                setShowAddModal(false);
+              }}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Medicine Code *</label>
+                    <input
+                      type="text"
+                      name="medicine_code"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., MED-001"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Medicine Name *</label>
+                    <input
+                      type="text"
+                      name="name"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., Amoxicillin"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Generic Name *</label>
+                    <input
+                      type="text"
+                      name="generic_name"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., Amoxicillin"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Brand Name</label>
+                    <input
+                      type="text"
+                      name="brand_name"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., Augmentin"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Category *</label>
+                    <select
+                      name="category"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    >
+                      <option value="">Select Category</option>
+                      {activeTab === 'medical' ? (
+                        <>
+                          <option value="Antibiotics">Antibiotics</option>
+                          <option value="Pain Relief">Pain Relief</option>
+                          <option value="Vitamins">Vitamins</option>
+                          <option value="Antiseptics">Antiseptics</option>
+                          <option value="Emergency">Emergency</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Anesthetics">Anesthetics</option>
+                          <option value="Antibiotics">Antibiotics</option>
+                          <option value="Pain Relief">Pain Relief</option>
+                          <option value="Dental Materials">Dental Materials</option>
+                          <option value="Preventive">Preventive</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Form *</label>
+                    <select
+                      name="form"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    >
+                      <option value="">Select Form</option>
+                      <option value="Tablet">Tablet</option>
+                      <option value="Capsule">Capsule</option>
+                      <option value="Liquid">Liquid</option>
+                      <option value="Injection">Injection</option>
+                      <option value="Topical">Topical</option>
+                      <option value="Spray">Spray</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Strength *</label>
+                    <input
+                      type="text"
+                      name="strength"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., 500mg, 10ml"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Initial Quantity *</label>
+                    <input
+                      type="number"
+                      name="quantity"
+                      required
+                      min="0"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., 100"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Reorder Threshold *</label>
+                    <input
+                      type="number"
+                      name="reorder_threshold"
+                      required
+                      min="0"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., 20"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Unit Cost *</label>
+                    <input
+                      type="number"
+                      name="unit_cost"
+                      required
+                      min="0"
+                      step="0.01"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                      placeholder="e.g., 12.50"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Expiry Date *</label>
+                    <input
+                      type="date"
+                      name="expiry_date"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-8 flex justify-end space-x-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-6 py-3 text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors duration-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-200 flex items-center space-x-2"
+                  >
+                    <Plus className="h-5 w-5" />
+                    <span>Add Medicine</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Medicine Modal */}
+        {showEditModal && editMedicine && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white rounded-3xl p-8 max-w-4xl w-full mx-4 shadow-2xl transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-2xl font-bold text-gray-900">Edit {editMedicine.name}</h3>
+                <button
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditMedicine(null);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
+                >
+                  <X className="h-6 w-6 text-gray-500" />
+                </button>
+              </div>
+              
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target as HTMLFormElement);
+                const targetArray = activeTab === 'medical' ? mockMedicalMedicines : mockDentalMedicines;
+                const medicineIndex = targetArray.findIndex(m => m.id === editMedicine.id);
+                
+                if (medicineIndex !== -1) {
+                  const updatedMedicine = {
+                    ...editMedicine,
+                    medicine_code: formData.get('medicine_code') as string,
+                    name: formData.get('name') as string,
+                    generic_name: formData.get('generic_name') as string,
+                    brand_name: formData.get('brand_name') as string,
+                    category: formData.get('category') as string,
+                    form: formData.get('form') as string,
+                    strength: formData.get('strength') as string,
+                    quantity: parseInt(formData.get('quantity') as string),
+                    reorder_threshold: parseInt(formData.get('reorder_threshold') as string),
+                    unit_cost: parseFloat(formData.get('unit_cost') as string),
+                    expiry_date: formData.get('expiry_date') as string,
+                    updated_at: new Date().toISOString()
+                  };
+                  
+                  targetArray[medicineIndex] = updatedMedicine;
+                  alert('Medicine updated successfully!');
+                  setShowEditModal(false);
+                  setEditMedicine(null);
+                }
+              }}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Medicine Code *</label>
+                    <input
+                      type="text"
+                      name="medicine_code"
+                      defaultValue={editMedicine.medicine_code}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Medicine Name *</label>
+                    <input
+                      type="text"
+                      name="name"
+                      defaultValue={editMedicine.name}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Generic Name *</label>
+                    <input
+                      type="text"
+                      name="generic_name"
+                      defaultValue={editMedicine.generic_name}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Brand Name</label>
+                    <input
+                      type="text"
+                      name="brand_name"
+                      defaultValue={editMedicine.brand_name}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Category *</label>
+                    <select
+                      name="category"
+                      defaultValue={editMedicine.category}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    >
+                      <option value="">Select Category</option>
+                      {activeTab === 'medical' ? (
+                        <>
+                          <option value="Antibiotics">Antibiotics</option>
+                          <option value="Pain Relief">Pain Relief</option>
+                          <option value="Vitamins">Vitamins</option>
+                          <option value="Antiseptics">Antiseptics</option>
+                          <option value="Emergency">Emergency</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Anesthetics">Anesthetics</option>
+                          <option value="Antibiotics">Antibiotics</option>
+                          <option value="Pain Relief">Pain Relief</option>
+                          <option value="Dental Materials">Dental Materials</option>
+                          <option value="Preventive">Preventive</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Form *</label>
+                    <select
+                      name="form"
+                      defaultValue={editMedicine.form}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    >
+                      <option value="">Select Form</option>
+                      <option value="Tablet">Tablet</option>
+                      <option value="Capsule">Capsule</option>
+                      <option value="Liquid">Liquid</option>
+                      <option value="Injection">Injection</option>
+                      <option value="Topical">Topical</option>
+                      <option value="Spray">Spray</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Strength *</label>
+                    <input
+                      type="text"
+                      name="strength"
+                      defaultValue={editMedicine.strength}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Current Quantity *</label>
+                    <input
+                      type="number"
+                      name="quantity"
+                      defaultValue={editMedicine.quantity}
+                      required
+                      min="0"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Reorder Threshold *</label>
+                    <input
+                      type="number"
+                      name="reorder_threshold"
+                      defaultValue={editMedicine.reorder_threshold}
+                      required
+                      min="0"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Unit Cost *</label>
+                    <input
+                      type="number"
+                      name="unit_cost"
+                      defaultValue={editMedicine.unit_cost}
+                      required
+                      min="0"
+                      step="0.01"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Expiry Date *</label>
+                    <input
+                      type="date"
+                      name="expiry_date"
+                      defaultValue={editMedicine.expiry_date.split('T')[0]}
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-8 flex justify-end space-x-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditModal(false);
+                      setEditMedicine(null);
+                    }}
+                    className="px-6 py-3 text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors duration-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-200 flex items-center space-x-2"
+                  >
+                    <Edit className="h-5 w-5" />
+                    <span>Update Medicine</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* View Medicine Modal */}
+        {viewMedicine && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white rounded-3xl p-8 max-w-3xl w-full mx-4 shadow-2xl transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-2xl font-bold text-gray-900">Medicine Details</h3>
+                <button
+                  onClick={() => setViewMedicine(null)}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
+                >
+                  <X className="h-6 w-6 text-gray-500" />
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Medicine Code</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.medicine_code}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Name</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.name}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Generic Name</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.generic_name}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Brand Name</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.brand_name}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Category</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.category}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Department</label>
+                  <p className="text-lg text-gray-900 mt-1 capitalize">{viewMedicine.department}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Form & Strength</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.form} • {viewMedicine.strength}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Current Stock</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.quantity} units</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Reorder Threshold</label>
+                  <p className="text-lg text-gray-900 mt-1">{viewMedicine.reorder_threshold} units</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Unit Cost</label>
+                  <p className="text-lg text-gray-900 mt-1">${viewMedicine.unit_cost}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-600">Expiry Date</label>
+                  <p className="text-lg text-gray-900 mt-1">{new Date(viewMedicine.expiry_date).toLocaleDateString()}</p>
+                </div>
+              </div>
+
+              <div className="mt-8 flex justify-end space-x-4">
+                <button
+                  onClick={() => setViewMedicine(null)}
+                  className="px-6 py-3 text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors duration-200"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    handleEdit(viewMedicine);
+                    setViewMedicine(null);
+                  }}
+                  className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-200"
+                >
+                  Edit Medicine
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Medicines;
